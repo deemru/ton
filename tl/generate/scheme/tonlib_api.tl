@@ -22,6 +22,7 @@ keyStoreTypeInMemory = KeyStoreType;
 config config:string blockchain_name:string use_callbacks_for_network:Bool ignore_cache:Bool = Config;
 
 options config:config keystore_type:KeyStoreType = Options;
+options.configInfo default_wallet_id:int53 = options.ConfigInfo;
 
 key public_key:string secret:secureBytes = Key;
 inputKeyRegular key:key local_password:secureBytes = InputKey;
@@ -50,6 +51,9 @@ testWallet.accountState balance:int64 seqno:int32 last_transaction_id:internal.t
 wallet.initialAccountState public_key:string = wallet.InitialAccountState;
 wallet.accountState balance:int64 seqno:int32 last_transaction_id:internal.transactionId sync_utime:int53 = wallet.AccountState;
 
+wallet.v3.initialAccountState public_key:string wallet_id:int53 = wallet.v3.InitialAccountState;
+wallet.v3.accountState balance:int64 wallet_id:int53 seqno:int32 last_transaction_id:internal.transactionId sync_utime:int53 = wallet.v3.AccountState;
+
 testGiver.accountState balance:int64 seqno:int32 last_transaction_id:internal.transactionId sync_utime:int53= testGiver.AccountState;
 
 uninited.accountState balance:int64 last_transaction_id:internal.transactionId frozen_hash:bytes sync_utime:int53 = uninited.AccountState;
@@ -61,6 +65,7 @@ uninited.accountState balance:int64 last_transaction_id:internal.transactionId f
 generic.accountStateRaw account_state:raw.accountState = generic.AccountState;
 generic.accountStateTestWallet account_state:testWallet.accountState = generic.AccountState;
 generic.accountStateWallet account_state:wallet.accountState = generic.AccountState;
+generic.accountStateWalletV3 account_state:wallet.v3.accountState = generic.AccountState;
 generic.accountStateTestGiver account_state:testGiver.accountState = generic.AccountState;
 generic.accountStateUninited account_state:uninited.accountState = generic.AccountState;
 
@@ -73,7 +78,21 @@ fees in_fwd_fee:int53 storage_fee:int53 gas_fee:int53 fwd_fee:int53= Fees;
 query.fees source_fees:fees destination_fees:fees = query.Fees;
 query.info id:int53 valid_until:int53 body_hash:bytes  = query.Info;
 
+tvm.slice bytes:string = tvm.Slice;
+tvm.cell bytes:string = tvm.Cell;
+tvm.numberDecimal number:string = tvm.Number;
+
+tvm.stackEntrySlice slice:tvm.slice = tvm.StackEntry;
+tvm.stackEntryCell cell:tvm.cell = tvm.StackEntry;
+tvm.stackEntryNumber number:tvm.Number = tvm.StackEntry;
+tvm.stackEntryUnsupported = tvm.StackEntry;
+
 smc.info id:int53 = smc.Info;
+
+smc.methodIdNumber number:int32 = smc.MethodId;
+smc.methodIdName name:string = smc.MethodId;
+
+smc.runResult gas_used:int53 stack:vector<tvm.StackEntry> exit_code:int32 = smc.RunResult;
 
 updateSendLiteServerQuery id:int64 data:bytes = Update;
 updateSyncState sync_state:SyncState = Update;
@@ -98,8 +117,6 @@ logTags tags:vector<string> = LogTags;
 
 data bytes:secureBytes = Data;
 
-tvm.cell bytes:string = tvm.Cell;
-
 liteServer.info now:int53 version:int32 capabilities:int64 = liteServer.Info;
 
 ---functions---
@@ -108,6 +125,7 @@ init options:options = Ok;
 close = Ok;
 
 options.setConfig config:config = Ok;
+options.validateConfig config:config = options.ConfigInfo;
 
 createNewKey local_password:secureBytes mnemonic_password:secureBytes random_extra_seed:secureBytes = Key;
 deleteKey key:key = Ok;
@@ -126,7 +144,6 @@ kdf password:secureBytes salt:secureBytes iterations:int32 = Data;
 
 unpackAccountAddress account_address:string = UnpackedAccountAddress;
 packAccountAddress account_address:unpackedAccountAddress = AccountAddress;
-
 getBip39Hints prefix:string = Bip39Hints;
 
 //raw.init initial_account_state:raw.initialAccountState = Ok;
@@ -146,6 +163,8 @@ wallet.init private_key:InputKey = Ok;
 wallet.getAccountAddress initital_account_state:wallet.initialAccountState = AccountAddress;
 wallet.getAccountState account_address:accountAddress = wallet.AccountState;
 wallet.sendGrams private_key:InputKey destination:accountAddress seqno:int32 valid_until:int53 amount:int64 message:bytes = SendGramsResult;
+
+wallet.v3.getAccountAddress initital_account_state:wallet.v3.initialAccountState = AccountAddress;
 
 testGiver.getAccountState = testGiver.AccountState;
 testGiver.getAccountAddress = AccountAddress;
@@ -168,6 +187,7 @@ smc.load account_address:accountAddress = smc.Info;
 smc.getCode id:int53 = tvm.Cell;
 smc.getData id:int53 = tvm.Cell;
 smc.getState id:int53 = tvm.Cell;
+smc.runGetMethod id:int53 method:smc.MethodId stack:vector<tvm.StackEntry> = smc.RunResult;
 
 onLiteServerQueryResult id:int64 bytes:bytes = Ok;
 onLiteServerQueryError id:int64 error:error = Ok;
