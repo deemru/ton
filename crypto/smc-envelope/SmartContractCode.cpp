@@ -27,11 +27,7 @@ namespace ton {
 namespace {
 const auto& get_map() {
   static auto map = [] {
-    class Cmp : public std::less<> {
-     public:
-      using is_transparent = void;
-    };
-    std::map<std::string, td::Ref<vm::Cell>, Cmp> map;
+    std::map<std::string, td::Ref<vm::Cell>, std::less<>> map;
     auto with_tvm_code = [&](auto name, td::Slice code_str) {
       map[name] = vm::std_boc_deserialize(td::base64_decode(code_str).move_as_ok()).move_as_ok();
     };
@@ -39,6 +35,7 @@ const auto& get_map() {
 #include "smartcont/auto/simple-wallet-ext-code.cpp"
 #include "smartcont/auto/simple-wallet-code.cpp"
 #include "smartcont/auto/wallet-code.cpp"
+#include "smartcont/auto/highload-wallet-code.cpp"
     return map;
   }();
   return map;
@@ -67,6 +64,10 @@ td::Ref<vm::Cell> SmartContractCode::simple_wallet() {
 }
 td::Ref<vm::Cell> SmartContractCode::simple_wallet_ext() {
   static auto res = load("simple-wallet-ext").move_as_ok();
+  return res;
+}
+td::Ref<vm::Cell> SmartContractCode::highload_wallet() {
+  static auto res = load("highload-wallet").move_as_ok();
   return res;
 }
 }  // namespace ton

@@ -30,10 +30,6 @@
 
 namespace ton {
 namespace {
-td::int32 get_method_id(td::Slice method_name) {
-  unsigned crc = td::crc16(method_name);
-  return (crc & 0xffff) | 0x10000;
-}
 td::Ref<vm::Stack> prepare_vm_stack(td::Ref<vm::CellSlice> body) {
   td::Ref<vm::Stack> stack_ref{true};
   td::RefInt256 acc_addr{true};
@@ -111,7 +107,7 @@ SmartContract::Answer run_smartcont(SmartContract::State state, td::Ref<vm::Stac
   if (GET_VERBOSITY_LEVEL() >= VERBOSITY_NAME(DEBUG)) {
     LOG(DEBUG) << "VM log\n" << logger.res;
     std::ostringstream os;
-    res.stack->dump(os);
+    res.stack->dump(os, 2);
     LOG(DEBUG) << "VM stack:\n" << os.str();
     LOG(DEBUG) << "VM exit code: " << res.code;
     LOG(DEBUG) << "VM accepted: " << res.accepted;

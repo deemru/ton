@@ -35,6 +35,7 @@ set(TON_CRYPTO_SOURCE
   vm/debugops.cpp
   vm/tonops.cpp
   vm/boc.cpp
+  vm/utils.cpp
   tl/tlblib.cpp
 
   Ed25519.h
@@ -80,6 +81,7 @@ set(TON_CRYPTO_SOURCE
   vm/tupleops.h
   vm/tonops.h
   vm/vmstate.h
+  vm/utils.h
 
   vm/cells.h
   vm/cellslice.h
@@ -201,6 +203,7 @@ set(BLOCK_SOURCE
 
 set(SMC_ENVELOPE_SOURCE
   smc-envelope/GenericAccount.cpp
+  smc-envelope/HighloadWallet.cpp
   smc-envelope/MultisigWallet.cpp
   smc-envelope/SmartContract.cpp
   smc-envelope/SmartContractCode.cpp
@@ -210,6 +213,7 @@ set(SMC_ENVELOPE_SOURCE
   smc-envelope/WalletV3.cpp
 
   smc-envelope/GenericAccount.h
+  smc-envelope/HighloadWallet.h
   smc-envelope/MultisigWallet.h
   smc-envelope/SmartContract.h
   smc-envelope/SmartContractCode.h
@@ -383,6 +387,14 @@ add_executable(dump-block block/dump-block.cpp)
 target_include_directories(dump-block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 target_link_libraries(dump-block PUBLIC ton_crypto fift-lib ton_block)
+if (WINGETOPT_FOUND)
+  target_link_libraries_system(dump-block wingetopt)
+endif()
+
+add_executable(adjust-block block/adjust-block.cpp)
+target_include_directories(adjust-block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+target_link_libraries(adjust-block PUBLIC ton_crypto fift-lib ton_block)
 if (WINGETOPT_FOUND)
   target_link_libraries_system(dump-block wingetopt)
 endif()

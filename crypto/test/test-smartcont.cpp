@@ -35,6 +35,7 @@
 #include "smc-envelope/TestWallet.h"
 #include "smc-envelope/Wallet.h"
 #include "smc-envelope/WalletV3.h"
+#include "smc-envelope/HighloadWallet.h"
 
 #include "td/utils/base64.h"
 #include "td/utils/crypto.h"
@@ -225,7 +226,7 @@ TEST(Tonlib, Wallet) {
   auto dest = block::StdAddress::parse("Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX").move_as_ok();
   fift_output =
       fift::mem_run_fift(std::move(fift_output.source_lookup),
-                         {"aba", "new-wallet", "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX", "123", "321"})
+                         {"aba", "new-wallet", "-C", "TESTv2", "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX", "123", "321"})
           .move_as_ok();
   auto wallet_query = fift_output.source_lookup.read_file("wallet-query.boc").move_as_ok().data;
   auto gift_message = ton::GenericAccount::create_ext_message(
@@ -274,7 +275,7 @@ TEST(Tonlib, WalletV3) {
   auto dest = block::StdAddress::parse("Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX").move_as_ok();
   fift_output =
       fift::mem_run_fift(std::move(fift_output.source_lookup),
-                         {"aba", "new-wallet", "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX", "239", "123", "321"})
+                         {"aba", "new-wallet", "-C", "TESTv3", "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX", "239", "123", "321"})
           .move_as_ok();
   auto wallet_query = fift_output.source_lookup.read_file("wallet-query.boc").move_as_ok().data;
   auto gift_message = ton::GenericAccount::create_ext_message(
@@ -282,6 +283,73 @@ TEST(Tonlib, WalletV3) {
   LOG(ERROR) << "-------";
   vm::load_cell_slice(gift_message).print_rec(std::cerr);
   LOG(ERROR) << "-------";
+  vm::load_cell_slice(vm::std_boc_deserialize(wallet_query).move_as_ok()).print_rec(std::cerr);
+  CHECK(vm::std_boc_deserialize(wallet_query).move_as_ok()->get_hash() == gift_message->get_hash());
+}
+
+TEST(Tonlib, HighloadWallet) {
+  auto source_lookup = fift::create_mem_source_lookup(load_source("smartcont/new-highload-wallet.fif")).move_as_ok();
+  source_lookup.write_file("/auto/highload-wallet-code.fif", load_source("smartcont/auto/highload-wallet-code.fif"))
+      .ensure();
+  auto fift_output = fift::mem_run_fift(std::move(source_lookup), {"aba", "0", "239"}).move_as_ok();
+
+  LOG(ERROR) << fift_output.output;
+  auto new_wallet_pk = fift_output.source_lookup.read_file("new-wallet.pk").move_as_ok().data;
+  auto new_wallet_query = fift_output.source_lookup.read_file("new-wallet239-query.boc").move_as_ok().data;
+  auto new_wallet_addr = fift_output.source_lookup.read_file("new-wallet239.addr").move_as_ok().data;
+
+  td::Ed25519::PrivateKey priv_key{td::SecureString{new_wallet_pk}};
+  auto pub_key = priv_key.get_public_key().move_as_ok();
+  auto init_state = ton::HighloadWallet::get_init_state(pub_key, 239);
+  auto init_message = ton::HighloadWallet::get_init_message(priv_key, 239);
+  auto address = ton::GenericAccount::get_address(0, init_state);
+
+  CHECK(address.addr.as_slice() == td::Slice(new_wallet_addr).substr(0, 32));
+
+  td::Ref<vm::Cell> res = ton::GenericAccount::create_ext_message(address, init_state, init_message);
+
+  LOG(ERROR) << "---smc-envelope----";
+  vm::load_cell_slice(res).print_rec(std::cerr);
+  LOG(ERROR) << "---fift scripts----";
+  vm::load_cell_slice(vm::std_boc_deserialize(new_wallet_query).move_as_ok()).print_rec(std::cerr);
+  CHECK(vm::std_boc_deserialize(new_wallet_query).move_as_ok()->get_hash() == res->get_hash());
+
+  fift_output.source_lookup.write_file("/main.fif", load_source("smartcont/highload-wallet.fif")).ensure();
+  std::string order;
+  std::vector<ton::HighloadWallet::Gift> gifts;
+  auto add_order = [&](td::Slice dest_str, td::int64 gramms) {
+    auto g = td::to_string(gramms);
+    if (g.size() < 10) {
+      g = std::string(10 - g.size(), '0') + g;
+    }
+    order += PSTRING() << "SEND " << dest_str << " " << g.substr(0, g.size() - 9) << "." << g.substr(g.size() - 9)
+                       << "\n";
+
+    ton::HighloadWallet::Gift gift;
+    gift.destination = block::StdAddress::parse(dest_str).move_as_ok();
+    gift.gramms = gramms;
+    gifts.push_back(gift);
+  };
+  std::string dest_str = "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX";
+  add_order(dest_str, 0);
+  add_order(dest_str, 321000000000ll);
+  add_order(dest_str, 321ll);
+  fift_output.source_lookup.write_file("/order", order).ensure();
+  class ZeroOsTime : public fift::OsTime {
+   public:
+    td::uint32 now() override {
+      return 0;
+    }
+  };
+  fift_output.source_lookup.set_os_time(std::make_unique<ZeroOsTime>());
+  fift_output = fift::mem_run_fift(std::move(fift_output.source_lookup), {"aba", "new-wallet", "239", "123", "order"})
+                    .move_as_ok();
+  auto wallet_query = fift_output.source_lookup.read_file("wallet-query.boc").move_as_ok().data;
+  auto gift_message = ton::GenericAccount::create_ext_message(
+      address, {}, ton::HighloadWallet::make_a_gift_message(priv_key, 239, 123, 60, gifts));
+  LOG(ERROR) << "---smc-envelope----";
+  vm::load_cell_slice(gift_message).print_rec(std::cerr);
+  LOG(ERROR) << "---fift scripts----";
   vm::load_cell_slice(vm::std_boc_deserialize(wallet_query).move_as_ok()).print_rec(std::cerr);
   CHECK(vm::std_boc_deserialize(wallet_query).move_as_ok()->get_hash() == gift_message->get_hash());
 }
@@ -387,16 +455,17 @@ TEST(Smartcon, Multisig) {
 
   int n = 100;
   int k = 99;
+  td::uint32 wallet_id = std::numeric_limits<td::uint32>::max() - 3;
   std::vector<td::Ed25519::PrivateKey> keys;
   for (int i = 0; i < n; i++) {
     keys.push_back(td::Ed25519::generate_private_key().move_as_ok());
   }
   auto init_state = ms_lib->create_init_data(
-      td::transform(keys, [](auto& key) { return key.get_public_key().ok().as_octet_string(); }), k);
+      wallet_id, td::transform(keys, [](auto& key) { return key.get_public_key().ok().as_octet_string(); }), k);
   auto ms = ton::MultisigWallet::create(init_state);
 
-  td::uint64 query_id = 123;
-  ton::MultisigWallet::QueryBuilder qb(query_id, vm::CellBuilder().finalize());
+  td::uint64 query_id = 123 | ((100 * 60ull) << 32);
+  ton::MultisigWallet::QueryBuilder qb(wallet_id, query_id, vm::CellBuilder().finalize());
   // first empty query (init)
   CHECK(ms.write().send_external_message(vm::CellBuilder().finalize()).code == 0);
   // first empty query
@@ -423,7 +492,7 @@ TEST(Smartcon, Multisig) {
   ASSERT_EQ(0, ms->processed(query_id));
 
   {
-    ton::MultisigWallet::QueryBuilder qb(query_id, vm::CellBuilder().finalize());
+    ton::MultisigWallet::QueryBuilder qb(wallet_id, query_id, vm::CellBuilder().finalize());
     for (int i = 50; i + 1 < 100; i++) {
       qb.sign(i, keys[i]);
     }
@@ -439,6 +508,7 @@ TEST(Smartcon, Multisig) {
 TEST(Smartcont, MultisigStress) {
   int n = 10;
   int k = 5;
+  td::uint32 wallet_id = std::numeric_limits<td::uint32>::max() - 3;
 
   std::vector<td::Ed25519::PrivateKey> keys;
   for (int i = 0; i < n; i++) {
@@ -447,13 +517,14 @@ TEST(Smartcont, MultisigStress) {
   auto public_keys = td::transform(keys, [](auto& key) { return key.get_public_key().ok().as_octet_string(); });
   auto ms_lib = ton::MultisigWallet::create();
   auto init_state_old =
-      ms_lib->create_init_data_fast(td::transform(public_keys, [](auto& key) { return key.copy(); }), k);
-  auto init_state = ms_lib->create_init_data(td::transform(public_keys, [](auto& key) { return key.copy(); }), k);
+      ms_lib->create_init_data_fast(wallet_id, td::transform(public_keys, [](auto& key) { return key.copy(); }), k);
+  auto init_state =
+      ms_lib->create_init_data(wallet_id, td::transform(public_keys, [](auto& key) { return key.copy(); }), k);
   CHECK(init_state_old->get_hash() == init_state->get_hash());
   auto ms = ton::MultisigWallet::create(init_state);
   CHECK(ms->get_public_keys() == public_keys);
 
-  td::int32 now = 0;
+  td::int32 now = 100 * 60;
   td::int32 qid = 1;
   using Mask = std::bitset<128>;
   struct Query {
@@ -498,7 +569,7 @@ TEST(Smartcont, MultisigStress) {
   };
 
   auto sign_query = [&](Query& query, Mask mask) {
-    auto qb = ton::MultisigWallet::QueryBuilder(query.id, query.message);
+    auto qb = ton::MultisigWallet::QueryBuilder(wallet_id, query.id, query.message);
     int first_i = -1;
     for (int i = 0; i < (int)mask.size(); i++) {
       if (mask.test(i)) {

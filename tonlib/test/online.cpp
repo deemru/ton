@@ -451,6 +451,7 @@ void test_multisig(Client& client, const Wallet& giver_wallet) {
 
   int n = 16;
   int k = 10;
+  td::uint32 wallet_id = 7;
   std::vector<td::Ed25519::PrivateKey> private_keys;
   for (int i = 0; i < n; i++) {
     private_keys.push_back(td::Ed25519::generate_private_key().move_as_ok());
@@ -458,6 +459,7 @@ void test_multisig(Client& client, const Wallet& giver_wallet) {
 
   auto ms = ton::MultisigWallet::create();
   auto init_data = ms->create_init_data(
+      wallet_id,
       td::transform(private_keys, [](const auto& pk) { return pk.get_public_key().move_as_ok().as_octet_string(); }),
       k);
   ms = ton::MultisigWallet::create(init_data);
@@ -472,7 +474,7 @@ void test_multisig(Client& client, const Wallet& giver_wallet) {
     ton::GenericAccount::store_int_message(icb, block::StdAddress::parse(giver_wallet.address).move_as_ok(), 1);
     icb.store_bytes("\0\0\0\0", 4);
     vm::CellString::store(icb, "Greatings from multisig", 35 * 8).ensure();
-    ton::MultisigWallet::QueryBuilder qb(-1 - i, icb.finalize());
+    ton::MultisigWallet::QueryBuilder qb(wallet_id, -1 - i, icb.finalize());
     for (int i = 0; i < k - 1; i++) {
       qb.sign(i, private_keys[i]);
     }
@@ -533,14 +535,12 @@ int main(int argc, char* argv[]) {
 
   Client client;
   {
-    auto info = sync_send(client, make_object<tonlib_api::options_validateConfig>(
-                                      make_object<tonlib_api::config>(global_config_str, "", false, false)))
+    auto info = sync_send(client, make_object<tonlib_api::init>(make_object<tonlib_api::options>(
+                                      make_object<tonlib_api::config>(global_config_str, "", false, false),
+                                      make_object<tonlib_api::keyStoreTypeDirectory>(keystore_dir))))
                     .move_as_ok();
-    default_wallet_id = static_cast<td::uint32>(info->default_wallet_id_);
-    sync_send(client, make_object<tonlib_api::init>(make_object<tonlib_api::options>(
-                          make_object<tonlib_api::config>(global_config_str, "", false, false),
-                          make_object<tonlib_api::keyStoreTypeDirectory>(keystore_dir))))
-        .ensure();
+    default_wallet_id = static_cast<td::uint32>(info->config_info_->default_wallet_id_);
+    LOG(ERROR) << default_wallet_id;
   }
 
   // wait till client is synchronized with blockchain.
