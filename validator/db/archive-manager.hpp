@@ -1,3 +1,21 @@
+/*
+    This file is part of TON Blockchain Library.
+
+    TON Blockchain Library is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published by
+    the Free Software Foundation, either version 2 of the License, or
+    (at your option) any later version.
+
+    TON Blockchain Library is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Lesser General Public License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
+
+    Copyright 2019-2020 Telegram Systems LLP
+*/
 #pragma once
 
 #include "archive-slice.hpp"
@@ -5,32 +23,6 @@
 namespace ton {
 
 namespace validator {
-
-struct PackageId {
-  td::uint32 id;
-  bool key;
-  bool temp;
-
-  explicit PackageId(td::uint32 id, bool key, bool temp) : id(id), key(key), temp(temp) {
-  }
-
-  bool operator<(const PackageId &with) const {
-    return id < with.id;
-  }
-  bool operator==(const PackageId &with) const {
-    return id == with.id;
-  }
-
-  std::string path() const;
-  std::string name() const;
-
-  bool is_empty() {
-    return id == std::numeric_limits<td::uint32>::max();
-  }
-  static PackageId empty(bool key, bool temp) {
-    return PackageId(std::numeric_limits<td::uint32>::max(), key, temp);
-  }
-};
 
 class RootDb;
 
@@ -60,10 +52,10 @@ class ArchiveManager : public td::actor::Actor {
   void check_persistent_state(BlockIdExt block_id, BlockIdExt masterchain_block_id, td::Promise<bool> promise);
   void check_zero_state(BlockIdExt block_id, td::Promise<bool> promise);
 
-  //void truncate(BlockSeqno masterchain_seqno, td::Promise<td::Unit> promise);
+  void truncate(BlockSeqno masterchain_seqno, ConstBlockHandle handle, td::Promise<td::Unit> promise);
   //void truncate_continue(BlockSeqno masterchain_seqno, td::Promise<td::Unit> promise);
 
-  void run_gc(UnixTime ts);
+  void run_gc(UnixTime ts, UnixTime archive_ttl);
 
   /* from LTDB */
   void get_block_by_unix_time(AccountIdPrefixFull account_id, UnixTime ts, td::Promise<ConstBlockHandle> promise);
@@ -112,6 +104,7 @@ class ArchiveManager : public td::actor::Actor {
   std::map<PackageId, FileDescription> files_;
   std::map<PackageId, FileDescription> key_files_;
   std::map<PackageId, FileDescription> temp_files_;
+  BlockSeqno finalized_up_to_{0};
   bool async_mode_ = false;
   bool huge_transaction_started_ = false;
   td::uint32 huge_transaction_size_ = 0;

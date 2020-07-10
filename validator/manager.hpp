@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
 
@@ -215,7 +215,9 @@ class ValidatorManagerImpl : public ValidatorManager {
 
  private:
   // VALIDATOR GROUPS
-  ValidatorSessionId get_validator_set_id(ShardIdFull shard, td::Ref<ValidatorSet> val_set, td::Bits256 opts_hash);
+  ValidatorSessionId get_validator_set_id(ShardIdFull shard, td::Ref<ValidatorSet> val_set, td::Bits256 opts_hash,
+                                          BlockSeqno last_key_block_seqno,
+                                          const validatorsession::ValidatorSessionOptions &opts);
   td::actor::ActorOwn<ValidatorGroup> create_validator_group(ValidatorSessionId session_id, ShardIdFull shard,
                                                              td::Ref<ValidatorSet> validator_set,
                                                              validatorsession::ValidatorSessionOptions opts,
@@ -262,9 +264,10 @@ class ValidatorManagerImpl : public ValidatorManager {
   void update_shard_client_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) override;
 
   bool out_of_sync();
+  void applied_hardfork();
   void prestart_sync();
   void download_next_archive();
-  void downloaded_archive_slice(std::string name);
+  void downloaded_archive_slice(std::string name, bool is_tmp);
   void checked_archive_slice(std::vector<BlockSeqno> seqno);
   void finish_prestart_sync();
   void completed_prestart_sync();
@@ -510,7 +513,7 @@ class ValidatorManagerImpl : public ValidatorManager {
 
   void prepare_stats(td::Promise<std::vector<std::pair<std::string, std::string>>> promise) override;
 
-  void truncate(td::Ref<MasterchainState> state, td::Promise<td::Unit> promise) override;
+  void truncate(BlockSeqno seqno, ConstBlockHandle handle, td::Promise<td::Unit> promise) override;
 
   void wait_shard_client_state(BlockSeqno seqno, td::Timestamp timeout, td::Promise<td::Unit> promise) override;
 
@@ -555,6 +558,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::actor::ActorId<overlay::Overlays> overlays_;
 
   td::actor::ActorOwn<AsyncStateSerializer> serializer_;
+
+  std::map<BlockSeqno, std::pair<std::string, bool>> to_import_;
 
  private:
   std::unique_ptr<Callback> callback_;

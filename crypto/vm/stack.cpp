@@ -14,12 +14,13 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #include "vm/stack.hpp"
 #include "vm/continuation.h"
 #include "vm/box.hpp"
 #include "vm/atom.h"
+#include "vm/vmstate.h"
 
 namespace td {
 template class td::Cnt<std::string>;
@@ -221,7 +222,7 @@ StackEntry::StackEntry(Ref<Stack> stack_ref) : ref(std::move(stack_ref)), tp(t_s
 StackEntry::StackEntry(Ref<Continuation> cont_ref) : ref(std::move(cont_ref)), tp(t_vmcont) {
 }
 
-Ref<Continuation> StackEntry::as_cont() const & {
+Ref<Continuation> StackEntry::as_cont() const& {
   return as<Continuation, t_vmcont>();
 }
 
@@ -232,7 +233,7 @@ Ref<Continuation> StackEntry::as_cont() && {
 StackEntry::StackEntry(Ref<Box> box_ref) : ref(std::move(box_ref)), tp(t_box) {
 }
 
-Ref<Box> StackEntry::as_box() const & {
+Ref<Box> StackEntry::as_box() const& {
   return as<Box, t_box>();
 }
 
@@ -251,7 +252,7 @@ StackEntry::StackEntry(std::vector<StackEntry>&& tuple_components)
     : ref(Ref<Tuple>{true, std::move(tuple_components)}), tp(t_tuple) {
 }
 
-Ref<Tuple> StackEntry::as_tuple() const & {
+Ref<Tuple> StackEntry::as_tuple() const& {
   return as<Tuple, t_tuple>();
 }
 
@@ -259,7 +260,7 @@ Ref<Tuple> StackEntry::as_tuple() && {
   return move_as<Tuple, t_tuple>();
 }
 
-Ref<Tuple> StackEntry::as_tuple_range(unsigned max_len, unsigned min_len) const & {
+Ref<Tuple> StackEntry::as_tuple_range(unsigned max_len, unsigned min_len) const& {
   auto t = as<Tuple, t_tuple>();
   if (t.not_null() && t->size() <= max_len && t->size() >= min_len) {
     return t;
@@ -280,12 +281,37 @@ Ref<Tuple> StackEntry::as_tuple_range(unsigned max_len, unsigned min_len) && {
 StackEntry::StackEntry(Ref<Atom> atom_ref) : ref(std::move(atom_ref)), tp(t_atom) {
 }
 
-Ref<Atom> StackEntry::as_atom() const & {
+Ref<Atom> StackEntry::as_atom() const& {
   return as<Atom, t_atom>();
 }
 
 Ref<Atom> StackEntry::as_atom() && {
   return move_as<Atom, t_atom>();
+}
+
+bool StackEntry::for_each_scalar(const std::function<bool(const StackEntry&)>& func) const {
+  auto t = as<Tuple, t_tuple>();
+  if (t.not_null()) {
+    for (const auto& entry : *t) {
+      if (!entry.for_each_scalar(func)) {
+        return false;
+      }
+    }
+    return true;
+  } else {
+    return func(*this);
+  }
+}
+
+void StackEntry::for_each_scalar(const std::function<void(const StackEntry&)>& func) const {
+  auto t = as<Tuple, t_tuple>();
+  if (t.not_null()) {
+    for (const auto& entry : *t) {
+      entry.for_each_scalar(func);
+    }
+  } else {
+    func(*this);
+  }
 }
 
 const StackEntry& tuple_index(const Tuple& tup, unsigned idx) {
@@ -555,7 +581,7 @@ void Stack::push_int_quiet(td::RefInt256 val, bool quiet) {
     if (!quiet) {
       throw VmError{Excno::int_ov};
     } else if (val->is_valid()) {
-      push(td::RefInt256{true});
+      push(td::make_refint());
       return;
     }
   }
@@ -591,7 +617,7 @@ void Stack::push_builder(Ref<CellBuilder> cb) {
 }
 
 void Stack::push_smallint(long long val) {
-  push(td::RefInt256{true, val});
+  push(td::make_refint(val));
 }
 
 void Stack::push_bool(bool val) {
@@ -671,6 +697,21 @@ void Stack::push_maybe_cellslice(Ref<CellSlice> cs) {
   push_maybe(std::move(cs));
 }
 
+bool Stack::for_each_scalar(const std::function<bool(const StackEntry&)>& func) const {
+  for (const auto& v : stack) {
+    if (!v.for_each_scalar(func)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void Stack::for_each_scalar(const std::function<void(const StackEntry&)>& func) const {
+  for (const auto& v : stack) {
+    v.for_each_scalar(func);
+  }
+}
+
 /*
  *
  *   SERIALIZE/DESERIALIZE STACK VALUES
@@ -678,6 +719,10 @@ void Stack::push_maybe_cellslice(Ref<CellSlice> cs) {
  */
 
 bool StackEntry::serialize(vm::CellBuilder& cb, int mode) const {
+  auto* vsi = VmStateInterface::get();
+  if (vsi && !vsi->register_op()) {
+    return false;
+  }
   switch (tp) {
     case t_null:
       return cb.store_long_bool(0, 8);  // vm_stk_null#00 = VmStackValue;
@@ -739,6 +784,10 @@ bool StackEntry::serialize(vm::CellBuilder& cb, int mode) const {
 }
 
 bool StackEntry::deserialize(CellSlice& cs, int mode) {
+  auto* vsi = VmStateInterface::get();
+  if (vsi && !vsi->register_op()) {
+    return false;
+  }
   clear();
   int t = (mode & 0xf000) ? ((mode >> 12) & 15) : (int)cs.prefetch_ulong(8);
   switch (t) {
@@ -754,7 +803,7 @@ bool StackEntry::deserialize(CellSlice& cs, int mode) {
       t = (int)cs.prefetch_ulong(16) & 0x1ff;
       if (t == 0xff) {
         // vm_stk_nan#02ff = VmStackValue;
-        return cs.advance(16) && set_int(td::RefInt256{true});
+        return cs.advance(16) && set_int(td::make_refint());
       } else {
         // vm_stk_int#0201_ value:int257 = VmStackValue;
         td::RefInt256 val;
@@ -824,7 +873,7 @@ bool StackEntry::deserialize(CellSlice& cs, int mode) {
           return false;
         }
       } else if (n == 1) {
-        return cs.have_refs() && t[0].deserialize(cs.fetch_ref(), mode);
+        return cs.have_refs() && t[0].deserialize(cs.fetch_ref(), mode) && set(t_tuple, std::move(tuple));
       }
       return set(t_tuple, std::move(tuple));
     }
@@ -843,6 +892,10 @@ bool StackEntry::deserialize(Ref<Cell> cell, int mode) {
 }
 
 bool Stack::serialize(vm::CellBuilder& cb, int mode) const {
+  auto* vsi = VmStateInterface::get();
+  if (vsi && !vsi->register_op()) {
+    return false;
+  }
   // vm_stack#_ depth:(## 24) stack:(VmStackList depth) = VmStack;
   unsigned n = depth();
   if (!cb.store_ulong_rchk_bool(n, 24)) {  // vm_stack#_ depth:(## 24)
@@ -863,6 +916,10 @@ bool Stack::serialize(vm::CellBuilder& cb, int mode) const {
 }
 
 bool Stack::deserialize(vm::CellSlice& cs, int mode) {
+  auto* vsi = VmStateInterface::get();
+  if (vsi && !vsi->register_op()) {
+    return false;
+  }
   clear();
   // vm_stack#_ depth:(## 24) stack:(VmStackList depth) = VmStack;
   int n;

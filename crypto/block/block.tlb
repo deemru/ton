@@ -151,6 +151,9 @@ message$_ {X:Type} info:CommonMsgInfo
 message$_ {X:Type} info:CommonMsgInfoRelaxed
   init:(Maybe (Either StateInit ^StateInit))
   body:(Either X ^X) = MessageRelaxed X;
+  
+_ (Message Any) = MessageAny;
+
 //
 interm_addr_regular$0 use_dest_bits:(#<= 96) 
   = IntermediateAddress;
@@ -190,7 +193,10 @@ msg_export_new$001 out_msg:^MsgEnvelope
     transaction:^Transaction = OutMsg;
 msg_export_tr$011  out_msg:^MsgEnvelope 
     imported:^InMsg = OutMsg;
-msg_export_deq$110 out_msg:^MsgEnvelope  // out_msg_hash:bits256 ?
+msg_export_deq$1100 out_msg:^MsgEnvelope
+    import_block_lt:uint63 = OutMsg;
+msg_export_deq_short$1101 msg_env_hash:bits256
+    next_workchain:int32 next_addr_pfx:uint64
     import_block_lt:uint64 = OutMsg;
 msg_export_tr_req$111 out_msg:^MsgEnvelope 
     imported:^InMsg = OutMsg;
@@ -266,6 +272,7 @@ transaction$0111 account_addr:bits256 lt:uint64
   old:^X new:^X = MERKLE_UPDATE X;
 update_hashes#72 {X:Type} old_hash:bits256 new_hash:bits256
   = HASH_UPDATE X;
+!merkle_proof#03 {X:Type} virtual_hash:bits256 depth:uint16 virtual_root:^X = MERKLE_PROOF X;
 
 acc_trans#5 account_addr:bits256
             transactions:(HashmapAug 64 ^Transaction CurrencyCollection)
@@ -414,7 +421,7 @@ block_info#9bc7a987 version:uint32
   after_split:(## 1) 
   want_split:Bool want_merge:Bool
   key_block:Bool vert_seqno_incr:(## 1)
-  flags:(## 8)
+  flags:(## 8) { flags <= 1 }
   seq_no:# vert_seq_no:# { vert_seq_no >= vert_seqno_incr } 
   { prev_seq_no:# } { ~prev_seq_no + 1 = seq_no } 
   shard:ShardIdent gen_utime:uint32
@@ -423,6 +430,7 @@ block_info#9bc7a987 version:uint32
   gen_catchain_seqno:uint32
   min_ref_mc_seqno:uint32
   prev_key_block_seqno:uint32
+  gen_software:flags . 0?GlobalVersion
   master_ref:not_master?^BlkMasterInfo 
   prev_ref:^(BlkPrevInfo after_merge)
   prev_vert_ref:vert_seqno_incr?^(BlkPrevInfo 0)
@@ -476,6 +484,18 @@ shard_descr#b seq_no:uint32 reg_mc_seqno:uint32
   split_merge_at:FutureSplitMerge
   fees_collected:CurrencyCollection
   funds_created:CurrencyCollection = ShardDescr;
+
+shard_descr_new#a seq_no:uint32 reg_mc_seqno:uint32
+  start_lt:uint64 end_lt:uint64
+  root_hash:bits256 file_hash:bits256 
+  before_split:Bool before_merge:Bool
+  want_split:Bool want_merge:Bool
+  nx_cc_updated:Bool flags:(## 3) { flags = 0 }
+  next_catchain_seqno:uint32 next_validator_shard:uint64
+  min_ref_mc_seqno:uint32 gen_utime:uint32
+  split_merge_at:FutureSplitMerge
+  ^[ fees_collected:CurrencyCollection
+     funds_created:CurrencyCollection ] = ShardDescr;
 
 _ (HashmapE 32 ^(BinTree ShardDescr)) = ShardHashes;
 
@@ -572,6 +592,17 @@ _ to_mint:ExtraCurrencyCollection = ConfigParam 7;
 capabilities#c4 version:uint32 capabilities:uint64 = GlobalVersion;
 _ GlobalVersion = ConfigParam 8;  // all zero if absent
 _ mandatory_params:(Hashmap 32 True) = ConfigParam 9;
+_ critical_params:(Hashmap 32 True) = ConfigParam 10;
+
+cfg_vote_cfg#36 min_tot_rounds:uint8 max_tot_rounds:uint8 min_wins:uint8 max_losses:uint8 min_store_sec:uint32 max_store_sec:uint32 bit_price:uint32 cell_price:uint32 = ConfigProposalSetup;
+cfg_vote_setup#91 normal_params:^ConfigProposalSetup critical_params:^ConfigProposalSetup = ConfigVotingSetup;
+_ ConfigVotingSetup = ConfigParam 11;
+
+cfg_proposal#f3 param_id:int32 param_value:(Maybe ^Cell) if_hash_equal:(Maybe uint256) 
+  = ConfigProposal;
+cfg_proposal_status#ce expires:uint32 proposal:^ConfigProposal is_critical:Bool
+  voters:(HashmapE 16 True) remaining_weight:int64 validator_set_id:uint256 
+  rounds_remaining:uint8 wins:uint8 losses:uint8 = ConfigProposalStatus;
 
 wfmt_basic#1 vm_version:int32 vm_mode:uint64 = WorkchainFormat 1;
 wfmt_ext#0 min_addr_len:(## 12) max_addr_len:(## 12) addr_len_step:(## 12)
@@ -590,6 +621,9 @@ workchain#a6 enabled_since:uint32 actual_min_split:(## 8)
   = WorkchainDescr;
 
 _ workchains:(HashmapE 32 WorkchainDescr) = ConfigParam 12;
+
+complaint_prices#1a deposit:Grams bit_price:Grams cell_price:Grams = ComplaintPricing; 
+_ ComplaintPricing = ConfigParam 13;
 
 block_grams_created#6b masterchain_block_fee:Grams basechain_block_fee:Grams
   = BlockCreateFees;
@@ -646,7 +680,18 @@ config_fwd_prices#_ MsgForwardPrices = ConfigParam 25;
 
 catchain_config#c1 mc_catchain_lifetime:uint32 shard_catchain_lifetime:uint32 
   shard_validators_lifetime:uint32 shard_validators_num:uint32 = CatchainConfig;
+
+catchain_config_new#c2 flags:(## 7) { flags = 0 } shuffle_mc_validators:Bool
+  mc_catchain_lifetime:uint32 shard_catchain_lifetime:uint32
+  shard_validators_lifetime:uint32 shard_validators_num:uint32 = CatchainConfig;
+
 consensus_config#d6 round_candidates:# { round_candidates >= 1 }
+  next_candidate_delay_ms:uint32 consensus_timeout_ms:uint32
+  fast_attempts:uint32 attempt_duration:uint32 catchain_max_deps:uint32
+  max_block_bytes:uint32 max_collated_bytes:uint32 = ConsensusConfig;
+
+consensus_config_new#d7 flags:(## 7) { flags = 0 } new_catchain_ids:Bool
+  round_candidates:(## 8) { round_candidates >= 1 }
   next_candidate_delay_ms:uint32 consensus_timeout_ms:uint32
   fast_attempts:uint32 attempt_duration:uint32 catchain_max_deps:uint32
   max_block_bytes:uint32 max_collated_bytes:uint32 = ConsensusConfig;
@@ -683,6 +728,16 @@ top_block_descr#d5 proof_for:BlockIdExt signatures:(Maybe ^BlockSignatures)
 //  COLLATED DATA
 //
 top_block_descr_set#4ac789f3 collection:(HashmapE 96 ^TopBlockDescr) = TopBlockDescrSet;
+
+//
+//  VALIDATOR MISBEHAVIOR COMPLAINTS
+//
+prod_info#34 utime:uint32 mc_blk_ref:ExtBlkRef state_proof:^(MERKLE_PROOF Block)
+  prod_proof:^(MERKLE_PROOF ShardState) = ProducerInfo;
+no_blk_gen from_utime:uint32 prod_info:^ProducerInfo = ComplaintDescr;
+no_blk_gen_diff prod_info_old:^ProducerInfo prod_info_new:^ProducerInfo = ComplaintDescr;
+validator_complaint#bc validator_pubkey:bits256 description:^ComplaintDescr created_at:uint32 severity:uint8 reward_addr:uint256 paid:Grams suggested_fine:Grams suggested_fine_part:uint32 = ValidatorComplaint;
+complaint_status#2d complaint:^ValidatorComplaint voters:(HashmapE 16 True) vset_id:uint256 weight_remaining:int64 = ValidatorComplaintStatus;
 
 //
 //  TVM REFLECTION
@@ -727,3 +782,59 @@ after:^VmCont = VmCont;
 vmc_while_body$110011 cond:^VmCont body:^VmCont
 after:^VmCont = VmCont;
 vmc_pushint$1111 value:int32 next:^VmCont = VmCont;
+
+//
+//  DNS RECORDS
+//
+_ (HashmapE 16 ^DNSRecord) = DNS_RecordSet;
+
+chunk_ref$_ {n:#} ref:^(TextChunks (n + 1)) = TextChunkRef (n + 1);
+chunk_ref_empty$_ = TextChunkRef 0;
+text_chunk$_ {n:#} len:(## 8) data:(bits (len * 8)) next:(TextChunkRef n) = TextChunks (n + 1);
+text_chunk_empty$_ = TextChunks 0;
+text$_ chunks:(## 8) rest:(TextChunks chunks) = Text;
+dns_text#1eda _:Text = DNSRecord;
+
+dns_next_resolver#ba93 resolver:MsgAddressInt = DNSRecord;  // usually in record #-1
+
+dns_adnl_address#ad01 adnl_addr:bits256 flags:(## 8) { flags <= 1 }
+  proto_list:flags . 0?ProtoList = DNSRecord;  // often in record #2
+proto_list_nil$0 = ProtoList;
+proto_list_next$1 head:Protocol tail:ProtoList = ProtoList;
+proto_http#4854 = Protocol;
+
+dns_smc_address#9fd3 smc_addr:MsgAddressInt flags:(## 8) { flags <= 1 }
+  cap_list:flags . 0?SmcCapList = DNSRecord;   // often in record #1
+cap_list_nil$0 = SmcCapList;
+cap_list_next$1 head:SmcCapability tail:SmcCapList = SmcCapList;
+cap_method_seqno#5371 = SmcCapability;
+cap_method_pubkey#71f4 = SmcCapability;
+cap_is_wallet#2177 = SmcCapability;
+cap_name#ff name:Text = SmcCapability;
+
+//
+// PAYMENT CHANNELS
+//
+
+chan_config$_  init_timeout:uint32 close_timeout:uint32 a_key:bits256 b_key:bits256 
+  a_addr:^MsgAddressInt b_addr:^MsgAddressInt channel_id:uint64 min_A_extra:Grams = ChanConfig;
+
+chan_state_init$000  signed_A:Bool signed_B:Bool min_A:Grams min_B:Grams expire_at:uint32 A:Grams B:Grams = ChanState;
+chan_state_close$001 signed_A:Bool signed_B:Bool promise_A:Grams promise_B:Grams expire_at:uint32 A:Grams B:Grams = ChanState;
+chan_state_payout$010 A:Grams B:Grams = ChanState;
+
+chan_promise$_ channel_id:uint64 promise_A:Grams promise_B:Grams = ChanPromise;
+chan_signed_promise#_ sig:(Maybe ^bits512) promise:ChanPromise = ChanSignedPromise;
+
+chan_msg_init#27317822 inc_A:Grams inc_B:Grams min_A:Grams min_B:Grams channel_id:uint64 = ChanMsg;
+chan_msg_close#f28ae183 extra_A:Grams extra_B:Grams promise:ChanSignedPromise  = ChanMsg;
+chan_msg_timeout#43278a28 = ChanMsg;
+chan_msg_payout#37fe7810 = ChanMsg;
+
+chan_signed_msg$_ sig_A:(Maybe ^bits512) sig_B:(Maybe ^bits512) msg:ChanMsg = ChanSignedMsg;
+
+chan_op_cmd#912838d1 msg:ChanSignedMsg = ChanOp;
+
+
+chan_data$_ config:^ChanConfig state:^ChanState = ChanData;
+
